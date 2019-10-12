@@ -1,0 +1,6 @@
+email: your-email@your-domain.org
+agreed: true
+staging: true
+storage: .acme
+domains:
+- sub.your-domain.org
