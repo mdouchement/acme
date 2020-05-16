@@ -2,5 +2,6 @@ email: your-email@your-domain.org
 agreed: true
 staging: true
 storage: .acme
+key_type: rsa4096 # p256, p384, rsa2048, rsa4096, rsa8192 (ed25519 may not currently supported by LetsEncrypt)
 domains:
 - sub.your-domain.org

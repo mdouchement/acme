@@ -11,8 +11,8 @@ Let's Encrypt client used for manual certificate acquisition.
 ### Technologies / Frameworks
 
 - [Cobra](https://github.com/spf13/cobra)
-- [koanf](github.com/knadh/koanf)
-- [CertMagic](github.com/mholt/certmagic)
+- [koanf](https://github.com/knadh/koanf)
+- [CertMagic](https://github.com/caddyserver/certmagic)
 
 
 ## License

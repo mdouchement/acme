@@ -8,10 +8,10 @@ import (
 	"net/url"
 	"path/filepath"
 
+	"github.com/caddyserver/certmagic"
 	"github.com/knadh/koanf"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
-	"github.com/mholt/certmagic"
 	"github.com/spf13/cobra"
 )
 
@@ -49,26 +49,56 @@ func main() {
 			// Configure ACME
 			//
 
-			certmagic.Default.Email = konf.String("email")
-			certmagic.Default.Agreed = konf.Bool("agreed")
-			if konf.Bool("staging") {
-				log.Println("Using staging endpoint")
-				certmagic.Default.CA = certmagic.LetsEncryptStagingCA
-			}
-			certmagic.Default.Storage = &certmagic.FileStorage{Path: konf.String("storage")}
+			magic := certmagic.NewDefault()
+			magic.Storage = &certmagic.FileStorage{Path: konf.String("storage")}
 
-			certmagic.Default.OnEvent = func(event string, data interface{}) {
+			switch kt := certmagic.KeyType(konf.String("key_type")); kt {
+			case certmagic.ED25519:
+				fallthrough
+			case certmagic.P256:
+				fallthrough
+			case certmagic.P384:
+				fallthrough
+			case certmagic.RSA2048:
+				fallthrough
+			case certmagic.RSA4096:
+				fallthrough
+			case certmagic.RSA8192:
+				magic.KeySource = certmagic.StandardKeyGenerator{KeyType: kt}
+			default:
+				return fmt.Errorf("unsupported key_type: %s", kt)
+			}
+
+			magic.OnEvent = func(event string, data interface{}) {
 				log.Printf("Event: %s with data: %v\n", event, data)
 			}
 
-			// certmagic.Default.DisableHTTPChallenge = false
-			certmagic.Default.DisableTLSALPNChallenge = false
+			template := certmagic.ACMEManager{
+				Email:  konf.String("email"),
+				Agreed: konf.Bool("agreed"),
+				CA:     certmagic.LetsEncryptProductionCA,
+				//
+				AltHTTPPort:    certmagic.HTTPChallengePort,
+				AltTLSALPNPort: certmagic.TLSALPNChallengePort,
+				//
+				//
+				// DisableHTTPChallenge: false,
+				DisableTLSALPNChallenge: true,
+			}
+			if konf.Bool("staging") {
+				log.Println("Using staging endpoint")
+				template.CA = certmagic.LetsEncryptStagingCA
+			}
+
+			manager := certmagic.NewACMEManager(magic, template)
+			magic.Issuer = manager
+			magic.Revoker = manager
 
 			//
 			// Process ACME challenge
 			//
 
-			certmagic.CleanStorage(certmagic.Default.Storage, certmagic.CleanStorageOptions{
+			certmagic.CleanStorage(magic.Storage, certmagic.CleanStorageOptions{
 				ExpiredCerts: true,
 			})
 
@@ -79,17 +109,17 @@ func main() {
 
 			log.Println("Staring server for domains:", konf.Strings("domains"))
 			go func() {
-				err = http.ListenAndServe(":80", certmagic.Default.HTTPChallengeHandler(mux))
+				err = http.ListenAndServe(":80", manager.HTTPChallengeHandler(mux))
 				log.Fatal(err)
 			}()
 
-			err = certmagic.Manage(konf.Strings("domains"))
+			err = magic.ManageSync(konf.Strings("domains"))
 			if err != nil {
 				return err
 			}
 
 			if display {
-				displayKeys(konf)
+				displayKeys(konf, manager)
 			}
 			return nil
 		},
@@ -101,8 +131,8 @@ func main() {
 	}
 }
 
-func displayKeys(konf *koanf.Koanf) {
-	ca, err := url.Parse(certmagic.Default.CA)
+func displayKeys(konf *koanf.Koanf, manager *certmagic.ACMEManager) {
+	ca, err := url.Parse(manager.CA)
 	if err != nil {
 		log.Fatal(err)
 	}
