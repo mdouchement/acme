@@ -137,7 +137,7 @@ func displayKeys(konf *koanf.Koanf, manager *certmagic.ACMEManager) {
 		log.Fatal(err)
 	}
 
-	basedir := filepath.Join(konf.String("storage"), "acme", ca.Hostname(), "sites")
+	basedir := filepath.Join(konf.String("storage"), "certificates", ca.Hostname()+"-directory")
 	log.Println("Base directory:", basedir)
 
 	for _, domain := range konf.Strings("domains") {
