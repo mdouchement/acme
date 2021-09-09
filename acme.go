@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/caddyserver/certmagic"
 	"github.com/knadh/koanf"
@@ -24,16 +29,17 @@ var (
 	version  = "dev"
 	revision = "none"
 	date     = "unknown"
-
-	display bool
 )
 
 type controller struct {
 	display bool
+	showkey bool
+	showcrt bool
 
 	konf    *koanf.Koanf
 	magic   *certmagic.Config
 	manager *certmagic.ACMEManager
+	workdir string
 }
 
 func main() {
@@ -44,11 +50,11 @@ func main() {
 		Short:   fmt.Sprintf("Reads %s configuration file from the current directory", acmefile),
 		Version: fmt.Sprintf("%s - build %.7s @ %s", version, revision, date),
 		Args:    cobra.NoArgs,
-		PersistentPreRunE: func(c *cobra.Command, args []string) error {
+		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
 			ctrl.konf = koanf.New(delimiter)
 			return ctrl.konf.Load(file.Provider(acmefile), yaml.Parser())
 		},
-		RunE: func(c *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			if err := ctrl.configure(); err != nil {
 				return err
 			}
@@ -57,13 +63,75 @@ func main() {
 				return err
 			}
 
-			if !display {
+			if !ctrl.display {
 				return nil
 			}
 			return ctrl.displayKeys()
 		},
 	}
 	c.Flags().BoolVarP(&ctrl.display, "display-certificates", "", false, "Display on STDOUT the generated certificates")
+
+	//
+
+	path := &cobra.Command{
+		Use:   "path",
+		Short: "Returns path of the given domain",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if err := ctrl.configure(); err != nil {
+				return err
+			}
+
+			switch {
+			case ctrl.showkey && !ctrl.showcrt:
+				fmt.Printf("KEY: %s\n", ctrl.filename(args[0], "key"))
+			case !ctrl.showkey && ctrl.showcrt:
+				fmt.Printf("CRT: %s\n", ctrl.filename(args[0], "crt"))
+			default:
+				fmt.Printf("KEY: %s\n", ctrl.filename(args[0], "key"))
+				fmt.Printf("CRT: %s\n", ctrl.filename(args[0], "crt"))
+			}
+			return nil
+		},
+	}
+	path.Flags().BoolVarP(&ctrl.showkey, "key", "", false, "Display on STDOUT the generated key")
+	path.Flags().BoolVarP(&ctrl.showcrt, "crt", "", false, "Display on STDOUT the generated crt")
+	c.AddCommand(path)
+
+	//
+
+	details := &cobra.Command{
+		Use:   "details",
+		Short: "Show details of the given crt file",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			payload, err := os.ReadFile(args[0])
+			if err != nil {
+				return err
+			}
+
+			var block *pem.Block
+			for {
+				block, payload = pem.Decode(payload)
+
+				certificate, err := x509.ParseCertificate(block.Bytes)
+				if err != nil {
+					return err
+				}
+
+				fmt.Printf("%s->%s->%s\n",
+					certificate.Subject.CommonName,
+					certificate.NotBefore.Format(time.RFC3339),
+					certificate.NotAfter.Format(time.RFC3339),
+				)
+
+				if len(payload) == 0 {
+					return nil
+				}
+			}
+		},
+	}
+	c.AddCommand(details)
 
 	if err := c.Execute(); err != nil {
 		log.Fatal(err)
@@ -113,14 +181,20 @@ func (c *controller) configure() error {
 	}
 
 	c.manager = certmagic.NewACMEManager(c.magic, template)
-	c.magic.Issuer = c.manager
-	c.magic.Revoker = c.manager
+	c.magic.Issuers = []certmagic.Issuer{c.manager}
 
+	//
+
+	ca, err := url.Parse(c.manager.CA)
+	if err != nil {
+		return err
+	}
+	c.workdir = filepath.Join(c.konf.String("storage"), "certificates", ca.Hostname()+"-directory")
 	return nil
 }
 
 func (c *controller) challenge() error {
-	certmagic.CleanStorage(c.magic.Storage, certmagic.CleanStorageOptions{
+	certmagic.CleanStorage(context.Background(), c.magic.Storage, certmagic.CleanStorageOptions{
 		ExpiredCerts: true,
 	})
 
@@ -139,32 +213,32 @@ func (c *controller) challenge() error {
 }
 
 func (c *controller) displayKeys() error {
-	ca, err := url.Parse(c.manager.CA)
-	if err != nil {
-		return err
-	}
-
-	basedir := filepath.Join(c.konf.String("storage"), "certificates", ca.Hostname()+"-directory")
-	log.Println("Base directory:", basedir)
+	log.Println("Base directory:", c.workdir)
 
 	for _, domain := range c.konf.Strings("domains") {
-		filename := domain + ".key"
-		fmt.Printf("=> %s\n\n", filename)
+		filename := c.filename(domain, "key")
+		fmt.Printf("=> %s\n\n", filepath.Base(filename))
 
-		payload, err := ioutil.ReadFile(filepath.Join(basedir, domain, filename))
+		payload, err := ioutil.ReadFile(filename)
 		if err != nil {
 			return err
 		}
 		fmt.Println(string(payload))
 
-		filename = domain + ".crt"
-		fmt.Printf("=> %s\n\n", filename)
+		//
 
-		payload, err = ioutil.ReadFile(filepath.Join(basedir, domain, filename))
+		filename = c.filename(domain, "crt")
+		fmt.Printf("=> %s\n\n", filepath.Base(filename))
+
+		payload, err = ioutil.ReadFile(filename)
 		if err != nil {
 			return err
 		}
 		fmt.Println(string(payload))
 	}
 	return nil
+}
+
+func (c *controller) filename(domain, extension string) string {
+	return filepath.Join(c.workdir, domain, domain+"."+extension)
 }
