@@ -36,6 +36,7 @@ type controller struct {
 	showkey bool
 	showcrt bool
 
+	ctx     context.Context
 	konf    *koanf.Koanf
 	magic   *certmagic.Config
 	manager *certmagic.ACMEManager
@@ -43,7 +44,9 @@ type controller struct {
 }
 
 func main() {
-	ctrl := &controller{}
+	ctrl := &controller{
+		ctx: context.Background(),
+	}
 
 	c := &cobra.Command{
 		Use:     "acme",
@@ -209,7 +212,7 @@ func (c *controller) challenge() error {
 		log.Fatal(err)
 	}()
 
-	return c.magic.ManageSync(c.konf.Strings("domains"))
+	return c.magic.ManageSync(c.ctx, c.konf.Strings("domains"))
 }
 
 func (c *controller) displayKeys() error {
