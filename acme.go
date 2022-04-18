@@ -39,7 +39,7 @@ type controller struct {
 	ctx     context.Context
 	konf    *koanf.Koanf
 	magic   *certmagic.Config
-	manager *certmagic.ACMEManager
+	manager *certmagic.ACMEIssuer
 	workdir string
 }
 
@@ -166,7 +166,7 @@ func (c *controller) configure() error {
 		log.Printf("Event: %s with data: %v\n", event, data)
 	}
 
-	template := certmagic.ACMEManager{
+	template := certmagic.ACMEIssuer{
 		Email:  c.konf.String("email"),
 		Agreed: c.konf.Bool("agreed"),
 		CA:     certmagic.LetsEncryptProductionCA,
@@ -183,7 +183,7 @@ func (c *controller) configure() error {
 		template.CA = certmagic.LetsEncryptStagingCA
 	}
 
-	c.manager = certmagic.NewACMEManager(c.magic, template)
+	c.manager = certmagic.NewACMEIssuer(c.magic, template)
 	c.magic.Issuers = []certmagic.Issuer{c.manager}
 
 	//
