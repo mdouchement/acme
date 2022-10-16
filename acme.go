@@ -162,8 +162,9 @@ func (c *controller) configure() error {
 		return fmt.Errorf("unsupported key_type: %s", kt)
 	}
 
-	c.magic.OnEvent = func(event string, data interface{}) {
+	c.magic.OnEvent = func(_ context.Context, event string, data map[string]any) error {
 		log.Printf("Event: %s with data: %v\n", event, data)
+		return nil
 	}
 
 	template := certmagic.ACMEIssuer{
